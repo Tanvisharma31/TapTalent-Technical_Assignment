@@ -51,7 +51,6 @@ Implementation detail: [`backend/lib/backend-stack.ts`](backend/lib/backend-stac
 6. Tab close → `$disconnect`: row removed; ex-partner gets `partner_disconnected`.
 7. **Search again while in chat** clears the old chat first; previous partner gets `chat_ended` with `partner_rematching`.
 
-Protocol tables: [`backend/README.md`](backend/README.md).
 
 ---
 
@@ -84,7 +83,6 @@ Copy stack output **`WebSocketUrl`** (`wss://…/prod`). That URL *is* the backe
 
 Set `VITE_WS_URL` to that value (see [`frontend/.env.example`](frontend/.env.example)), then build and deploy on Vercel. Changing the env requires a **rebuild** (Vite inlines at compile time).
 
-Extended IAM / bootstrap notes: [`backend/README.md`](backend/README.md).
 
 ---
 
@@ -126,8 +124,6 @@ npm run dev
 /frontend   Vite + React client
 README.md   This file
 ```
-
-Deeper CDK and protocol reference: [`backend/README.md`](backend/README.md). Frontend-only notes: [`frontend/README.md`](frontend/README.md).
 
 ---
 
