@@ -1,0 +1,6 @@
+{
+  "availability-zones:account=YOUR_12_DIGIT_ACCOUNT_ID:region=YOUR_REGION": [
+    "YOUR_REGIONa",
+    "YOUR_REGIONb"
+  ]
+}
