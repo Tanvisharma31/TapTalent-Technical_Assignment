@@ -1,8 +1,31 @@
-*.js
-!jest.config.js
-*.d.ts
-node_modules
+# Dependencies
+node_modules/
 
-# CDK asset staging directory
-.cdk.staging
-cdk.out
+# Backend (AWS CDK + Lambda) — tsc output; do not commit
+backend/**/*.js
+!backend/jest.config.js
+backend/**/*.d.ts
+backend/.cdk.staging
+backend/cdk.out
+
+# Frontend (Vite)
+frontend/dist
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Logs & OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

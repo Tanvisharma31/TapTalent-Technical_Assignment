@@ -1,0 +1,168 @@
+.app {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 1.25rem;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.header h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.session {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+.pill {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: #e8e8ec;
+  color: #222;
+}
+
+.pill-disconnected {
+  background: #f3d4d4;
+}
+.pill-connecting {
+  background: #f5e6c8;
+}
+.pill-idle {
+  background: #e0e8f0;
+}
+.pill-searching {
+  background: #e8e0f8;
+}
+.pill-in_chat {
+  background: #d4f0dc;
+}
+
+.notice {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: #a40;
+}
+
+.warn {
+  background: #fff8e6;
+  padding: 1rem;
+  border-radius: 8px;
+}
+
+.warn code {
+  font-size: 0.85em;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  margin: 1rem 0;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #fafafa;
+  min-height: 220px;
+  max-height: min(50dvh, 360px);
+  text-align: left;
+  scroll-behavior: smooth;
+}
+
+.empty {
+  margin: 0;
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.line {
+  margin-bottom: 0.5rem;
+  word-break: break-word;
+}
+
+.line.system {
+  font-size: 0.8rem;
+  color: #666;
+  font-style: italic;
+}
+
+.line.msg {
+  max-width: 85%;
+  padding: 0.35rem 0.6rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.line.msg.mine {
+  margin-left: auto;
+  background: #2563eb;
+  color: #fff;
+}
+
+.line.msg.theirs {
+  margin-right: auto;
+  background: #e5e7eb;
+  color: #111;
+}
+
+.composer .row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.composer input[type='text'] {
+  flex: 1;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 1rem;
+}
+
+.composer input[type='text']:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
+.composer button {
+  padding: 0.5rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: #111;
+  color: #fff;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.composer button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.actions button {
+  flex: 1;
+  background: #fff;
+  color: #111;
+}
+
+.actions button:first-of-type {
+  background: #111;
+  color: #fff;
+}

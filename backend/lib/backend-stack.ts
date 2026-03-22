@@ -25,8 +25,7 @@ export class BackendStack extends cdk.Stack {
       ],
     });
 
-    // Aurora Serverless v2 is blocked on some AWS "free plan" accounts unless Express mode is set.
-    // db.t3.micro PostgreSQL works with RDS Free Tier and is reachable from Lambda (no VPC) when public.
+    // t3.micro fits Free Tier; public ingress lets Lambda (outside VPC) reach RDS without NAT.
     const db = new rds.DatabaseInstance(this, 'ChatDb', {
       engine: rds.DatabaseInstanceEngine.postgres({
         version: rds.PostgresEngineVersion.VER_16_4,
@@ -44,7 +43,7 @@ export class BackendStack extends cdk.Stack {
       deletionProtection: false,
     });
 
-    // EC2 rule description: only a-zA-Z0-9. _-:/()#,@[]+=&;{}!$* (no em-dash or apostrophe).
+    // Security group rule description: AWS allows only a limited ASCII set.
     db.connections.allowFrom(
       ec2.Peer.anyIpv4(),
       ec2.Port.tcp(5432),
@@ -74,7 +73,7 @@ export class BackendStack extends cdk.Stack {
 
     const webSocketApi = new apigwv2.WebSocketApi(this, 'ChatWs', {
       apiName: 'tap-talent-anonymous-chat',
-      description: 'Anonymous random text chat — WebSocket API',
+      description: 'Anonymous random text chat WebSocket API',
       connectRouteOptions: {
         integration: new integrations.WebSocketLambdaIntegration('OnConnect', wsHandler),
       },
@@ -94,6 +93,11 @@ export class BackendStack extends cdk.Stack {
       webSocketApi,
       stageName: 'prod',
       autoDeploy: true,
+      // Caps steady-state + burst Lambda invocations at API layer (helps avoid surprise free-tier usage).
+      throttle: {
+        rateLimit: 40,
+        burstLimit: 80,
+      },
     });
 
     webSocketApi.grantManageConnections(wsHandler);

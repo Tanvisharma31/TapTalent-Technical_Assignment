@@ -1,108 +1,140 @@
-# TapTalent — Anonymous random chat (AWS backend)
+# Anonymous random text chat
 
-Implements the **Backend** portion of *Anonymous Random Text Chat*: anonymous WebSocket clients, temporary session IDs, random pairing (one active chat per user), skip/end with partner notification, disconnect handling, and basic rate/size limits. **SQL** state is in **Amazon RDS for PostgreSQL** (`db.t3.micro`, Free Tier–eligible). Lambda uses the **`pg`** driver and reads the master password from **Secrets Manager**. RDS is **publicly reachable** on `5432` from any IPv4 so Lambda (no fixed egress IP) can connect — **demo only**; use a private VPC + NAT or RDS Proxy for production.
+Full-stack anonymous pairing chat: **WebSocket** matchmaking on **AWS** (Lambda, API Gateway, RDS PostgreSQL) and a **React + Vite** client deployable on **Vercel**. No accounts; each tab gets a short-lived session id, FIFO-style matching, skip/end with partner notification, disconnect handling, and per-connection rate limits.
 
-**Why not Aurora Serverless v2 here?** Some AWS accounts on a limited “free plan” cannot create that cluster unless **Express** configuration is enabled; RDS PostgreSQL micro avoids that error.
+---
 
-## Architecture overview
+## 1. What this is
 
-| Piece | Role |
-|--------|------|
-| **API Gateway (WebSocket)** | Persistent client connections; routes by `$request.body.action` (`search`, `message`, `skip`, `end`, `init`) plus `$default`. |
-| **Lambda (Node.js 20)** | `$connect` / `$disconnect` / message routes; matchmaking; `PostToConnection` to the partner. |
-| **RDS PostgreSQL 16 (`db.t3.micro`)** | SQL for connections, waiting queue (`FOR UPDATE SKIP LOCKED`), and per-connection rate windows. |
-| **Secrets Manager** | Master DB password (CDK-generated). |
+A minimal production-style demo: two strangers are matched into a one-to-one text room. Messages never hit REST; they flow over a single WebSocket through API Gateway to Lambda, which persists state in Postgres and pushes to the peer with `PostToConnection`.
+
+---
+
+## 2. Architecture (high level)
+
+| Layer | Choice | Role |
+|--------|--------|------|
+| Transport | API Gateway WebSocket | Long-lived connections; routes map to Lambda. |
+| Compute | Lambda (Node.js 20) | `$connect` / `$disconnect`, JSON actions (`init`, `search`, `message`, `skip`, `end`). |
+| Data | RDS PostgreSQL 16 (`db.t3.micro`) | `connections` (status, partner, session ids), `rate_limits` sliding window. |
+| Secrets | Secrets Manager | DB master password (CDK-generated). |
+
+Lambda is **not** in the VPC: RDS is **public** on `5432` with a security group open to `0.0.0.0/0` so this stack works on small accounts without NAT. That is a **demo tradeoff**; production would use private subnets, RDS Proxy or similar, and tighter network rules.
 
 ```mermaid
 flowchart LR
-  subgraph clients
-    A[Browser A]
-    B[Browser B]
+  subgraph clients [Browsers]
+    A[Client A]
+    B[Client B]
   end
   WS[API Gateway WebSocket]
   L[Lambda]
-  DB[(RDS PostgreSQL)]
+  DB[(RDS Postgres)]
   A --> WS
   B --> WS
   WS --> L
-  L -->|TLS pg| DB
+  L -->|pg TLS| DB
   L -->|PostToConnection| WS
 ```
 
-## Matchmaking and chat flow
+Implementation detail: [`backend/lib/backend-stack.ts`](backend/lib/backend-stack.ts), [`backend/lambda/websocket/handler.ts`](backend/lambda/websocket/handler.ts).
 
-1. **Connect** — Client opens `wss://.../prod`. Lambda inserts a `connections` row (`idle`, new `session_id`).
-2. **init** (optional) — Client sends `{"action":"init"}`; server replies `{ type: "session", sessionId }`.
-3. **search** — Client sends `{"action":"search"}`. In a **transaction**, Lambda sets this connection to `waiting`, then selects another `waiting` row with `ORDER BY updated_at` and `SKIP LOCKED`. If found, both rows become `in_chat` with the same `chat_id` and each other’s `connection_id` as `partner_id`; both receive `{ type: "matched", ... }`. Otherwise this client gets `{ type: "status", status: "searching" }`.
-4. **message** — `{"action":"message","text":"..."}`: validated for length and rate; forwarded to the partner as `{ type: "message", text, fromSessionId }`.
-5. **skip / end** — `{"action":"skip"}` or `{"action":"end"}` clears the chat for both; partner gets `{ type: "chat_ended", reason: "partner_skipped" }` (or `you_skipped` for the initiator).
-6. **Disconnect** — `$disconnect` removes the row and notifies the ex-partner with `{ type: "partner_disconnected" }`.
-7. **Re-search while in chat** — Starting a new **search** ends the current chat first; the old partner receives `{ type: "chat_ended", reason: "partner_rematching" }`.
+---
 
-## WebSocket protocol (client ↔ server)
+## 3. Matchmaking and chat flow
 
-| Client → server | Server → client (examples) |
-|-----------------|----------------------------|
-| `{"action":"init"}` | `{ "type":"session","sessionId":"..." }` |
-| `{"action":"search"}` | `{ "type":"status","status":"searching" }` or `{ "type":"matched", "chatId","yourSessionId","partnerSessionId" }` |
-| `{"action":"message","text":"hello"}` | `{ "type":"message","text","fromSessionId" }` (to partner) |
-| `{"action":"skip"}` / `{"action":"end"}` | `{ "type":"chat_ended","reason":"..." }` |
+1. Client opens `wss://…/prod`. `$connect` inserts a row: `idle`, new `session_id` (UUID).
+2. Client sends `{"action":"init"}` → server responds `{ "type":"session", "sessionId" }`.
+3. Client sends `{"action":"search"}`. Inside a transaction: set self to `waiting`; pick oldest other waiter with `ORDER BY updated_at` and `FOR UPDATE SKIP LOCKED`. If matched, both become `in_chat` with the same `chat_id` and receive `{ "type":"matched", … }`. Otherwise `{ "type":"status", "status":"searching" }`.
+4. `{"action":"message","text":"…"}`: length cap (2000) and rate limit (30 / 60s per connection); peer gets `{ "type":"message", "fromSessionId", "text" }`.
+5. `skip` or `end`: both cleared; partner gets `chat_ended` with `partner_skipped` / you get `you_skipped`.
+6. Tab close → `$disconnect`: row removed; ex-partner gets `partner_disconnected`.
+7. **Search again while in chat** clears the old chat first; previous partner gets `chat_ended` with `partner_rematching`.
 
-**Limits:** up to **2000** characters per message; **30** messages per **60** seconds per connection (stored in `rate_limits`).
+Protocol tables: [`backend/README.md`](backend/README.md).
 
-## Deployment approach
+---
 
-### Prerequisites
+## 4. Tech stack (why these)
 
-- Node.js 18+, AWS CLI v2, CDK CLI (`npm install -g aws-cdk`).
-- IAM permissions for CDK deploy: CloudFormation, Lambda, API Gateway v2, IAM (pass role), EC2 (VPC), RDS, Secrets Manager, S3 (CDK assets), plus **bootstrap** stack.
-- If `cdk synth` fails with `ec2:DescribeAvailabilityZones`, either attach **`AmazonEC2ReadOnlyAccess`** (or equivalent) **or** add AZs to **`cdk.context.json`** (see [CDK context](https://docs.aws.amazon.com/cdk/v2/guide/context.html)). This repo includes a sample `cdk.context.json` entry; adjust **account** and **region** for your environment.
+- **WebSocket API + Lambda**: fits the assignment (serverless, pay-per-use, no socket servers to run). Cold starts exist; acceptable for a portfolio piece.
+- **PostgreSQL**: durable queue + locking primitives (`SKIP LOCKED`) keep matchmaking correct under concurrency without Redis for this scale.
+- **`pg` in Lambda**: simple TLS to RDS; pool size capped low per runtime.
+- **CDK**: infrastructure as code, repeatable deploys, outputs for the frontend URL.
+- **React + Vite**: fast local dev; `VITE_WS_URL` bakes the WebSocket endpoint at build time (standard Vite env model).
+- **Vercel (frontend)**: static hosting + env-based builds; no server needed for the UI.
 
-### Commands
+---
+
+## 5. Deployment
+
+**Backend**
 
 ```bash
 cd backend
 npm install
 npm run build
-npx cdk bootstrap aws://ACCOUNT/REGION   # once per account/region
+npx cdk bootstrap aws://ACCOUNT/REGION
 npx cdk deploy
 ```
 
-Copy the **`WebSocketUrl`** output (`wss://{api-id}.execute-api.{region}.amazonaws.com/prod`) into your **React (Vercel)** app as the WebSocket endpoint.
+Copy stack output **`WebSocketUrl`** (`wss://…/prod`). That URL *is* the backend for this app.
 
-**Cost note:** `db.t3.micro` is often covered by **RDS Free Tier** for new accounts (750 hours/month, 12 months — confirm in [RDS Free Tier](https://aws.amazon.com/rds/free/)). Delete the stack when finished:
+**Frontend**
+
+Set `VITE_WS_URL` to that value (see [`frontend/.env.example`](frontend/.env.example)), then build and deploy on Vercel. Changing the env requires a **rebuild** (Vite inlines at compile time).
+
+Extended IAM / bootstrap notes: [`backend/README.md`](backend/README.md).
+
+---
+
+## 6. Scalability and ops
+
+- Matchmaking is **transactional SQL**; throughput is bounded by RDS connections, Lambda concurrency, and row-level locking. For very high churn you would add a dedicated queue (SQS + workers), connection pooling (RDS Proxy), or move hot paths to ElastiCache.
+- **One Lambda** handles all routes; splitting read/write or separating connect from messaging is a future split if metrics justify it.
+- **Schema init** runs `CREATE TABLE IF NOT EXISTS` once per new execution environment (`schemaReady` avoids repeat DDL in the same instance).
+
+---
+
+## 7. Known limitations
+
+- **Cold starts** (Lambda) and **RDS** wake-up after idle add latency.
+- **Public RDS + open SG** is intentional for Lambda-without-VPC; not a production security posture.
+- **Single region**; no cross-region pairing.
+- **No persistence** of message history (by design for anonymous chat).
+
+---
+
+## 8. Run locally
+
+**Backend:** synthesize or deploy with CDK (see above). There is no long-running local WebSocket server in this repo; the realistic path is deploy to AWS and point the UI at `WebSocketUrl`.
+
+**Frontend:**
 
 ```bash
-npx cdk destroy
+cd frontend
+cp .env.example .env
+# Edit .env: set VITE_WS_URL to your deployed wss:// URL
+npm install
+npm run dev
 ```
 
-If a previous deploy failed and CloudFormation shows **`ROLLBACK_COMPLETE`**, delete the **`BackendStack`** stack in the console (or run `npx cdk destroy`), then deploy again.
+**Repo layout**
 
-## Known limitations
+```
+/backend    AWS CDK app + Lambda source
+/frontend   Vite + React client
+README.md   This file
+```
 
-- **Cold starts** on Lambda and **RDS** startup after idle can add latency on first messages.
-- **Horizontal scaling:** matchmaking is transactional SQL; very high concurrency may require tuning (Postgres connection limits, RDS instance size, or a dedicated queue service).
-- **Global `schemaReady` flag** in the Lambda instance avoids re-running DDL; **new** execution environments still run `CREATE TABLE IF NOT EXISTS` once (safe and idempotent).
-- **Route selection** uses `$request.body.action`; clients should send JSON with an `action` field (or rely on `$default` treating missing `action` as `message`).
+Deeper CDK and protocol reference: [`backend/README.md`](backend/README.md). Frontend-only notes: [`frontend/README.md`](frontend/README.md).
 
-## Local development
+---
 
-- `npm run build` — compile CDK app.
-- `npm test` — asserts WebSocket API and RDS DB instance exist in the template.
-- `npx cdk synth` — emit CloudFormation without deploying.
+## Deliverables checklist
 
-## Assignment mapping
-
-| Requirement | Implementation |
-|-------------|----------------|
-| Anonymous, no login | No auth on WebSocket API. |
-| Temporary session ID | UUID per connection in SQL. |
-| Random / FIFO matchmaking | Oldest `waiting` peer, `SKIP LOCKED`. |
-| One chat per user | Enforced by `status` / `partner_id`. |
-| Real-time text | WebSocket + `PostToConnection`. |
-| Skip / end / re-match | `skip`/`end`/`search` handlers + notifications. |
-| Partner disconnect | `$disconnect` + `partner_disconnected`. |
-| Rate / length limits | `rate_limits` table + 2000-char cap. |
-| Node.js + WebSockets + SQL | Lambda + API Gateway WebSocket + RDS PostgreSQL (`pg`). |
-
-The **React (Vite) frontend** lives in [`../frontend/`](../frontend/) — see [frontend/README.md](../frontend/README.md). Set **`VITE_WS_URL`** to the deployed **`WebSocketUrl`**. The assignment overview for graders is in the [root README.md](../README.md).
+| Item | Notes |
+|------|--------|
+| Live frontend | Vercel (or similar) URL |
+| Live backend | `WebSocketUrl` from CDK outputs |
+| Source | This repository |

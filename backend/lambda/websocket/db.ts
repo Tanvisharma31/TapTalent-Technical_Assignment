@@ -4,10 +4,10 @@ import { Pool } from 'pg';
 
 let poolPromise: Promise<Pool> | undefined;
 
-function env(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env ${name}`);
-  return v;
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing env ${name}`);
+  return value;
 }
 
 async function getPool(): Promise<Pool> {
@@ -19,14 +19,14 @@ async function getPool(): Promise<Pool> {
 
 async function createPool(): Promise<Pool> {
   const sm = new SecretsManagerClient({});
-  const out = await sm.send(new GetSecretValueCommand({ SecretId: env('SECRET_ARN') }));
+  const out = await sm.send(new GetSecretValueCommand({ SecretId: requireEnv('SECRET_ARN') }));
   const raw = out.SecretString;
   if (!raw) throw new Error('Empty DB secret');
   const { username, password } = JSON.parse(raw) as { username: string; password: string };
   return new Pool({
-    host: env('PGHOST'),
-    port: parseInt(env('PGPORT'), 10),
-    database: env('PGDATABASE'),
+    host: requireEnv('PGHOST'),
+    port: parseInt(requireEnv('PGPORT'), 10),
+    database: requireEnv('PGDATABASE'),
     user: username,
     password,
     max: 4,
@@ -62,14 +62,16 @@ export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>)
   }
 }
 
-export function col(rows: Record<string, unknown>[], key: string): string | undefined {
-  const v = rows[0]?.[key];
-  if (v == null) return undefined;
-  return String(v);
+/** First row, string column (Postgres may return UUID as string). */
+export function scalarString(rows: Record<string, unknown>[], key: string): string | undefined {
+  const cell = rows[0]?.[key];
+  if (cell == null) return undefined;
+  return String(cell);
 }
 
-export function colNum(rows: Record<string, unknown>[], key: string): number | undefined {
-  const v = rows[0]?.[key];
-  if (v == null) return undefined;
-  return typeof v === 'number' ? v : Number(v);
+/** First row, numeric column. */
+export function scalarNumber(rows: Record<string, unknown>[], key: string): number | undefined {
+  const cell = rows[0]?.[key];
+  if (cell == null) return undefined;
+  return typeof cell === 'number' ? cell : Number(cell);
 }
